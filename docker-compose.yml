@@ -1,0 +1,160 @@
+services:
+  # Base de données PostgreSQL
+  postgres:
+    image: postgres:17.2
+    container_name: postgres-outer-wilds
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: outer-wilds-db
+    ports:
+      - "5432:5432"
+    networks:
+      - app-network
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "user", "-d", "outer-wilds-db", "-h", "localhost" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper pour Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD", "echo ruok | nc localhost 2181 | grep imok" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "9092" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+    networks:
+      - app-network
+
+  # Initialisation des topics Kafka
+  kafka-init:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+    user: "0:0" # Exécute en tant que root
+    volumes:
+      - ./logs:/logs # Monte un volume pour les logs
+    environment:
+      - LOG4J_OPTS="-Dlog4j.configuration=file:/etc/kafka/log4j.properties"
+      - LOG_DIR=/logs
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      mkdir -p /logs && chmod 777 /logs
+      echo 'Waiting for Kafka to be ready...'
+      cub kafka-ready -b kafka:9092 1 30
+
+      kafka-topics --create --if-not-exists --topic ship-positions --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3
+      kafka-topics --create --if-not-exists --topic planet-positions --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3
+      "
+    networks:
+      - app-network
+
+  # Backend Python
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: outer-wilds-db
+      DB_USER: user
+      DB_PASSWORD: password
+      ENV_NAME: dev
+      KAFKA_HOST: kafka
+      KAFKA_PORT: 9092
+      KAFKA_TOPIC_PLANETS: planet-positions
+      KAFKA_TOPIC_SHIPS: ship-positions
+      LOGGER_LEVEL: ERROR
+      TOKEN_SECRET_KEY: 5e1fc44a970f7c27d0b1ad5956053840c628cc2c731e3eb5ea67df02ddf6af28
+      TOKEN_ALGORITHM: HS256
+      TOKEN_EXPIRE_MINUTES: 15
+    ports:
+      - "8000:8000"
+    networks:
+      - app-network
+
+  # Serveur Rust
+  rust-server:
+    build:
+      context: ../rust-server
+      dockerfile: Dockerfile
+    container_name: rust-server
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC: planet-positions
+      BACKEND_URL: http://localhost:8000
+      WEBSOCKET_URL: ws://rust-server:3012
+      WEBSOCKET_HOST: "0.0.0.0"
+      WEBSOCKET_PORT: "3012"
+    ports:
+      - "3012:3012"
+    networks:
+      - app-network
+
+  # Frontend Vue.js
+  frontend:
+    build:
+      context: ../outer-wilds-front
+      dockerfile: Dockerfile
+    container_name: frontend
+    environment:
+      VITE_WEBSOCKET_URL: ws://rust-server:3012
+    depends_on:
+      - rust-server
+    ports:
+      - "5173:5173"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+
+
