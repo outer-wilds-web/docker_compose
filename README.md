@@ -22,7 +22,7 @@ docker compose up --build
 ```
 
 Dès que tout les services sont initialisés et l'application lancée, vous pouvez vous rendre sur l'adresse suivante :
-localhost:8081
+localhost:5173
 
 Arrivé sur l'adresse, vous voyez le système solaire en train de tourner et un vaisseau assez proche de vous. Vous pouvez le contrôler en appuyant sur Z, Q, S et D.
 Lorsque vous ouvrez un nouvel onglet sur la même adresse, un nouveau vaisseau apparaitra, controllable uniquement depuis cet onglet.
