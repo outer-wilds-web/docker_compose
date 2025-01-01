@@ -142,7 +142,7 @@ services:
       dockerfile: Dockerfile
     container_name: frontend
     environment:
-      VITE_WEBSOCKET_URL: ws://rust-server:3012
+      VITE_WEBSOCKET_URL: ws://localhost:3012
     depends_on:
       - rust-server
     ports:
